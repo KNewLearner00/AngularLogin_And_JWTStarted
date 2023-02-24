@@ -11,6 +11,7 @@ using System.Text.RegularExpressions;
 using System;
 using System.Security.Claims;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.AspNetCore.Authorization;
 
 namespace AngularAuthApi.Controllers
 {
@@ -116,6 +117,7 @@ namespace AngularAuthApi.Controllers
             return jwtTokenHandler.WriteToken(token);
         }
 
+        [Authorize]
         [HttpGet]
         public async Task<ActionResult<User>> GetAllUser()
         {
