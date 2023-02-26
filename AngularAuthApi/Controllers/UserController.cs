@@ -12,6 +12,10 @@ using System;
 using System.Security.Claims;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.Authorization;
+using System.Security.Cryptography;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
+using AngularAuthApi.Models.Dto;
+using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 
 namespace AngularAuthApi.Controllers
 {
@@ -41,12 +45,18 @@ namespace AngularAuthApi.Controllers
             }
 
             user.Token = CreateJwt (user);
+            var newAccessToken = user.Token;
+            var newRefreshToken = CreateRefreshToken();
+            user.RefreshToken = newRefreshToken;
+            user.RefreshTokenExpiredTime = DateTime.Now.AddDays(5); 
+            await _authContext.SaveChangesAsync();
 
-            return Ok(new
+            return Ok(new TokenApiDto()
             {
-                Token = user.Token,
-                Message = "Login Sucess !"
-            }) ;
+                AccessToken = newAccessToken,
+                RefreshToken = newRefreshToken
+            });
+            
         }
         [HttpPost("register")]
         public async Task<IActionResult> RegisterUser([FromBody] User userobj)
@@ -72,7 +82,7 @@ namespace AngularAuthApi.Controllers
             await _authContext.Users.AddAsync(userobj);
             await _authContext.SaveChangesAsync();
             return Ok(new
-            {
+            {    
                 Message = "User Register!"
             });
         }
@@ -103,18 +113,53 @@ namespace AngularAuthApi.Controllers
             var identity = new ClaimsIdentity(new Claim[]
             {
                 new Claim(ClaimTypes.Role , user.Role),
-                new Claim(ClaimTypes.Name,$"{user.FirstName}:{user.LastName}")
+                new Claim(ClaimTypes.Name,$"{user.Username}")   //{user.FirstName} {user.LastName}
             });  //Payload(Identity)
                                                                                                        //Using this Algorithm for creating Token.
             var credentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256);
             var tokenDescriptor = new SecurityTokenDescriptor
             {
                 Subject= identity,
-                Expires= DateTime.Now.AddDays(1),
+                Expires= DateTime.Now.AddSeconds(30),
                 SigningCredentials = credentials
             };
             var token =jwtTokenHandler.CreateToken(tokenDescriptor);
             return jwtTokenHandler.WriteToken(token);
+        }
+        
+        private string CreateRefreshToken()
+        {
+            var tokenBytes = RandomNumberGenerator.GetBytes(64);
+            var refreshToken =Convert.ToBase64String(tokenBytes);
+            var tokenInUser = _authContext.Users
+                .Any(a=> a.RefreshToken== refreshToken);
+            if(tokenInUser)
+            {
+                return CreateRefreshToken();
+            }
+            return refreshToken;
+        }
+         
+        private ClaimsPrincipal GetPrincipleFromExpirdToken(string token)
+        {
+            var key = Encoding.ASCII.GetBytes("veryverysecreat.....");
+            var tokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateAudience =false,
+                ValidateIssuer =false,
+                ValidateIssuerSigningKey= true,
+                IssuerSigningKey = new SymmetricSecurityKey(key),
+                ValidateLifetime=false
+             };
+            var tokenHandler = new JwtSecurityTokenHandler();
+            SecurityToken securityToken;
+            var principle = tokenHandler.ValidateToken(token, tokenValidationParameters, out securityToken);
+            var jwtSecurityToken= securityToken as JwtSecurityToken;
+            if (jwtSecurityToken == null ||!jwtSecurityToken.Header.Alg.Equals(SecurityAlgorithms.HmacSha256, StringComparison.InvariantCultureIgnoreCase))
+            {
+                throw new SecurityTokenException("This Is Invalid Token");
+            }
+                return principle;
         }
 
         [Authorize]
@@ -122,6 +167,29 @@ namespace AngularAuthApi.Controllers
         public async Task<ActionResult<User>> GetAllUser()
         {
             return Ok(await _authContext.Users.ToListAsync());
+        }
+
+        [HttpPost("refresh")]
+        public async Task<IActionResult> Refresh(TokenApiDto tokenApiDto)
+        {
+            if (tokenApiDto is null)
+                return BadRequest("Inavalid Client Request");
+            string accessaToken = tokenApiDto.AccessToken;
+            string refreshToken = tokenApiDto.RefreshToken;
+            var principal = GetPrincipleFromExpirdToken(accessaToken);
+            var username = principal.Identity.Name;
+            var user = await _authContext.Users.FirstOrDefaultAsync(u => u.Username == username);
+            if (user is null || user.RefreshToken != refreshToken || user.RefreshTokenExpiredTime <= DateTime.Now)
+                return BadRequest("Inavalid Request");
+            var newAccessToken = CreateJwt(user);
+            var newRefreshToken = CreateRefreshToken();
+            user.RefreshToken = newRefreshToken;
+            await _authContext.SaveChangesAsync();
+            return Ok(new TokenApiDto()
+            { 
+                AccessToken = newAccessToken,
+                RefreshToken = refreshToken,
+            });
         }
     }
 }
