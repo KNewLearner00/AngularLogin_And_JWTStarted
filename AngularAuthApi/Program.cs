@@ -1,4 +1,5 @@
 using AngularAuthApi.Context;
+using AngularAuthApi.Models.Repository;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -25,6 +26,7 @@ builder.Services.AddDbContext<AppDbContext>(option =>
 {
     option.UseSqlServer(builder.Configuration.GetConnectionString("SqlServerConStr"));
 });
+builder.Services.AddTransient(typeof(IGenericRepo<>),typeof(Genericrepo<>));
 
 builder.Services.AddAuthentication(x =>
 {
